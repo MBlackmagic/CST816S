@@ -2,7 +2,7 @@
    MIT License
 
   Copyright (c) 2021 Felix Biego
-
+  Modified (c) 2024 Mehmet Ali Ersöz
   Permission is hereby granted, free of charge, to any person obtaining a copy
   of this software and associated documentation files (the "Software"), to deal
   in the Software without restriction, including without limitation the rights
@@ -28,30 +28,32 @@
 
 #include "CST816S.h"
 
+// Feste Displayauflösung (z.B. 240x240 Pixel)
+const int displayWidth = 360;
+const int displayHeight = 360;
 
 /*!
     @brief  Constructor for CST816S
-	@param	sda
-			i2c data pin
-	@param	scl
-			i2c clock pin
-	@param	rst
-			touch reset pin
-	@param	irq
-			touch interrupt pin
+  @param	sda
+      i2c data pin
+  @param	scl
+      i2c clock pin
+  @param	rst
+      touch reset pin
+  @param	irq
+      touch interrupt pin
 */
-CST816S::CST816S(int sda, int scl, int rst, int irq) {
-  _sda = sda;
-  _scl = scl;
-  _rst = rst;
-  _irq = irq;
-
+CST816S::CST816S(int sda, int scl, int rst, int irq)
+    : _sda(sda), _scl(scl), _rst(rst), _irq(irq), rotation(0), _event_available(false)
+{
+  // Initialisiere Pins und den Drehwinkel (rotation = 0)
 }
 
 /*!
     @brief  read touch data
 */
-void CST816S::read_touch() {
+void CST816S::read_touch()
+{
   byte data_raw[8];
   i2c_read(CST816S_ADDRESS, 0x01, data_raw, 6);
 
@@ -60,20 +62,67 @@ void CST816S::read_touch() {
   data.event = data_raw[2] >> 6;
   data.x = ((data_raw[2] & 0xF) << 8) + data_raw[3];
   data.y = ((data_raw[4] & 0xF) << 8) + data_raw[5];
+
+  // Koordinaten basierend auf der Rotation anpassen
+  adjustCoordinates(data.x, data.y);
+}
+
+/*!
+    @brief  set the rotation of the touch coordinates (0°, 90°, 180°, 270°)
+    @param  rotation
+            angle of rotation in degrees
+*/
+void CST816S::setRotation(int rotation)
+{
+  this->rotation = rotation % 360; // Drehwinkel sicherstellen (0°, 90°, 180°, 270°)
+}
+
+/*!
+    @brief  adjust the coordinates based on the rotation
+    @param  x
+            reference to x coordinate
+    @param  y
+            reference to y coordinate
+*/
+void CST816S::adjustCoordinates(int &x, int &y)
+{
+  int temp;
+  switch (rotation)
+  {
+  case 90:
+    temp = x;
+    x = displayHeight - y;
+    y = temp;
+    break;
+  case 180:
+    x = displayWidth - x;
+    y = displayHeight - y;
+    break;
+  case 270:
+    temp = x;
+    x = y;
+    y = displayWidth - temp; 
+    break;
+
+  case 0:
+  default:
+    break;
+  }
 }
 
 /*!
     @brief  handle interrupts
 */
-void IRAM_ATTR CST816S::handleISR(void) {
+void IRAM_ATTR CST816S::handleISR(void)
+{
   _event_available = true;
-
 }
 
 /*!
     @brief  enable double click
 */
-void CST816S::enable_double_click(void) {
+void CST816S::enable_double_click(void)
+{
   byte enableDoubleTap = 0x01; // Set EnDClick (bit 0) to enable double-tap
   i2c_write(CST816S_ADDRESS, 0xEC, &enableDoubleTap, 1);
 }
@@ -83,27 +132,29 @@ void CST816S::enable_double_click(void) {
     @param  milliseconds
             Time in milliseconds before entering standby mode.
 */
-void CST816S::enable_auto_standby(uint16_t milliseconds) {
-    byte standbyTime = min(milliseconds / 1000, 255); // Convert milliseconds to seconds, max value 255
-    i2c_write(CST816S_ADDRESS, 0xF9, &standbyTime, 1);
+void CST816S::enable_auto_standby(uint16_t milliseconds)
+{
+  byte standbyTime = min(milliseconds / 1000, 255); // Convert milliseconds to seconds, max value 255
+  i2c_write(CST816S_ADDRESS, 0xF9, &standbyTime, 1);
 }
 
 /*!
     @brief  initialize the touch screen
-	@param	interrupt
-			type of interrupt FALLING, RISING..
+  @param	interrupt
+      type of interrupt FALLING, RISING..
 */
-void CST816S::begin(int interrupt) {
+void CST816S::begin(int interrupt)
+{
   Wire.begin(_sda, _scl);
 
   pinMode(_irq, INPUT);
   pinMode(_rst, OUTPUT);
 
-  digitalWrite(_rst, HIGH );
+  digitalWrite(_rst, HIGH);
   delay(50);
   digitalWrite(_rst, LOW);
   delay(5);
-  digitalWrite(_rst, HIGH );
+  digitalWrite(_rst, HIGH);
   delay(50);
 
   i2c_read(CST816S_ADDRESS, 0x15, &data.version, 1);
@@ -116,8 +167,10 @@ void CST816S::begin(int interrupt) {
 /*!
     @brief  check for a touch event
 */
-bool CST816S::available() {
-  if (_event_available) {
+bool CST816S::available()
+{
+  if (_event_available)
+  {
     read_touch();
     _event_available = false;
     return true;
@@ -128,10 +181,11 @@ bool CST816S::available() {
 /*!
     @brief  put the touch screen in standby mode
 */
-void CST816S::sleep() {
+void CST816S::sleep()
+{
   digitalWrite(_rst, LOW);
   delay(5);
-  digitalWrite(_rst, HIGH );
+  digitalWrite(_rst, HIGH);
   delay(50);
   byte standby_value = 0x03;
   i2c_write(CST816S_ADDRESS, 0xA5, &standby_value, 1);
@@ -140,56 +194,60 @@ void CST816S::sleep() {
 /*!
     @brief  get the gesture event name
 */
-String CST816S::gesture() {
-  switch (data.gestureID) {
-    case NONE:
-      return "NONE";
-      break;
-    case SWIPE_DOWN:
-      return "SWIPE DOWN";
-      break;
-    case SWIPE_UP:
-      return "SWIPE UP";
-      break;
-    case SWIPE_LEFT:
-      return "SWIPE LEFT";
-      break;
-    case SWIPE_RIGHT:
-      return "SWIPE RIGHT";
-      break;
-    case SINGLE_CLICK:
-      return "SINGLE CLICK";
-      break;
-    case DOUBLE_CLICK:
-      return "DOUBLE CLICK";
-      break;
-    case LONG_PRESS:
-      return "LONG PRESS";
-      break;
-    default:
-      return "UNKNOWN";
-      break;
+String CST816S::gesture()
+{
+  switch (data.gestureID)
+  {
+  case NONE:
+    return "NONE";
+    break;
+  case SWIPE_DOWN:
+    return "SWIPE DOWN";
+    break;
+  case SWIPE_UP:
+    return "SWIPE UP";
+    break;
+  case SWIPE_LEFT:
+    return "SWIPE LEFT";
+    break;
+  case SWIPE_RIGHT:
+    return "SWIPE RIGHT";
+    break;
+  case SINGLE_CLICK:
+    return "SINGLE CLICK";
+    break;
+  case DOUBLE_CLICK:
+    return "DOUBLE CLICK";
+    break;
+  case LONG_PRESS:
+    return "LONG PRESS";
+    break;
+  default:
+    return "UNKNOWN";
+    break;
   }
 }
 
 /*!
     @brief  read data from i2c
-	@param	addr
-			i2c device address
-	@param	reg_addr
-			device register address
-	@param	reg_data
-			array to copy the read data
-	@param	length
-			length of data
+  @param	addr
+      i2c device address
+  @param	reg_addr
+      device register address
+  @param	reg_data
+      array to copy the read data
+  @param	length
+      length of data
 */
 uint8_t CST816S::i2c_read(uint16_t addr, uint8_t reg_addr, uint8_t *reg_data, size_t length)
 {
   Wire.beginTransmission(addr);
   Wire.write(reg_addr);
-  if ( Wire.endTransmission(true))return -1;
+  if (Wire.endTransmission(true))
+    return -1;
   Wire.requestFrom(addr, length, true);
-  for (int i = 0; i < length; i++) {
+  for (int i = 0; i < length; i++)
+  {
     *reg_data++ = Wire.read();
   }
   return 0;
@@ -197,23 +255,25 @@ uint8_t CST816S::i2c_read(uint16_t addr, uint8_t reg_addr, uint8_t *reg_data, si
 
 /*!
     @brief  write data to i2c
-	@brief  read data from i2c
-	@param	addr
-			i2c device address
-	@param	reg_addr
-			device register address
-	@param	reg_data
-			data to be sent
-	@param	length
-			length of data
+  @brief  read data from i2c
+  @param	addr
+      i2c device address
+  @param	reg_addr
+      device register address
+  @param	reg_data
+      data to be sent
+  @param	length
+      length of data
 */
 uint8_t CST816S::i2c_write(uint8_t addr, uint8_t reg_addr, const uint8_t *reg_data, size_t length)
 {
   Wire.beginTransmission(addr);
   Wire.write(reg_addr);
-  for (int i = 0; i < length; i++) {
+  for (int i = 0; i < length; i++)
+  {
     Wire.write(*reg_data++);
   }
-  if ( Wire.endTransmission(true))return -1;
+  if (Wire.endTransmission(true))
+    return -1;
   return 0;
 }
